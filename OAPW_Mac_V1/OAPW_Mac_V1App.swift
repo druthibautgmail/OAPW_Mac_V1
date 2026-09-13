@@ -1,16 +1,14 @@
 import SwiftUI
 
 @main
-struct OAPW_Mac_V1App: App {
+struct OAPW_Mac_V2App: App {
     var body: some Scene {
-        WindowGroup {
+        // Hier steht jetzt unser gemeinsamer Titel für die Fensterleiste!
+        WindowGroup("OAPW Ambiophonics – by Dr. Ulrich Thibaut") {
             AmbiophonicsDashboard()
-                .frame(minWidth: 800, minHeight: 600)
-                .onAppear {
-                    // Zwingt die App beim Start garantiert in den Vordergrund
-                    NSApplication.shared.activate(ignoringOtherApps: true)
-                }
+                .frame(minWidth: 950, minHeight: 950)
         }
-        // Den hiddenTitleBar-Befehl haben wir testweise entfernt
+        .defaultSize(width: 1000, height: 1000)
+        .windowResizability(.contentMinSize)
     }
 }

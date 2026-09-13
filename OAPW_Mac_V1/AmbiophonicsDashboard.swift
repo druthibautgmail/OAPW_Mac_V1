@@ -1,210 +1,428 @@
 import SwiftUI
+import Combine
 
-// MARK: - ViewModel für die C++ RACE Engine
-@Observable
-class RACEProcessorState {
-    
-    static let shared = RACEProcessorState()
-    
-    private var enginePtr: UnsafeMutableRawPointer?
-    
-    var isEnabled: Bool = true
-    // Vorher: var masterGain: Double = 1.0
-    var masterGain: Double = 0.0 // Jetzt in dB
-    var attenuation: Double = -2.3
-    
-    // NEU: Jetzt in echten Mikrosekunden
-    var delayMicroseconds: Double = 68.0
-    var centerLevel: Double = 0.5
-    
-    var stageWidth: Double = 100.0
-    var activeInput: String = "BlackHole 2ch"
-    var activeOutput: String = "HDMI"
-    
-    private init() {
-        // Init mit Float(delayMicroseconds) aufrufen
-        enginePtr = createRACEEngine(Float(delayMicroseconds), Float(attenuation), 1.0, true)
-        
-        applyParameters()
-        applyCenterLevel()
-        applyVolume() // NEU: Lautstärke initial an C++ übergeben
-        
-        AudioEngineManager.shared.dspCallback = { [weak self] left, right, frames in
-            if let ptr = self?.enginePtr {
-                wrapper_processSamples(ptr, left, right, frames)
-            }
-        }
-        
-        AudioEngineManager.shared.setupAndStart()
-    }
-    
-    // ... restlicher Code bleibt ...
-    
-    deinit {
-        destroyRACEEngine(enginePtr)
-    }
-    
-    func applyEnabled() {
-        wrapper_setRaceEnabled(enginePtr, isEnabled)
-    }
-    
-    func applyVolume() {
-        wrapper_setVolume(enginePtr, Float(masterGain))
-    }
-    
-    func applyParameters() {
-            // Hier schicken wir jetzt die reinen Mikrosekunden an den C-Wrapper
-            wrapper_setParameters(enginePtr, Float(delayMicroseconds), Float(attenuation), 1.0, true)
-        }
-    
-    func applyCenterLevel() {
-        wrapper_setCenterLevel(enginePtr, Float(centerLevel))
-    }
-}
-
-// MARK: - Main Dashboard View
 struct AmbiophonicsDashboard: View {
-    @State private var dspState = RACEProcessorState.shared
+    // Globale Status
+    @State private var isRunning = true
+    @State private var isAmbiophonicsActive = true
+    @State private var processingMode = 0 // 0 = Music, 1 = Movie
     
+    // RACE Parameter
+    @State private var attenuation: Float = -2.3
+    @State private var speakerDelay: Float = 68.0
+    @State private var centerLevel: Float = 0.0
+    @State private var volumePercent: Float = 100.0
+
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    headerSection
-                    
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 24) {
-                        
-                        CardContainer {
-                            VStack(alignment: .leading, spacing: 20) {
-                                Label("RACE Parameters", systemImage: "waveform.path.ecg")
-                                    .font(.headline)
-                                    .foregroundColor(.secondary)
-                                
-                                // Die .onChange-Modifier erzwingen den Sync mit C++
-                                // ... innerhalb des CardContainers für die "RACE Parameters":
-
-                                SliderControl(title: "Attenuation", value: $dspState.attenuation, range: -12...0, unit: "dB")
-                                    .onChange(of: dspState.attenuation) { _, _ in dspState.applyParameters() }
-
-                                // NEU: Der Slider arbeitet jetzt direkt mit den Mikrosekunden und einem passenden Range
-                                SliderControl(title: "Speaker Delay", value: $dspState.delayMicroseconds, range: 0...500, unit: "µs")
-                                    .onChange(of: dspState.delayMicroseconds) { _, _ in dspState.applyParameters() }
-
-                                SliderControl(title: "Center Level", value: $dspState.centerLevel, range: 0.0...1.0, unit: "")
-                                    .onChange(of: dspState.centerLevel) { _, _ in dspState.applyCenterLevel() }
-                                
-                                // NEU: Der Make-Up Gain Slider
-                                    SliderControl(title: "Make-Up Gain", value: $dspState.masterGain, range: 0...12, unit: "dB")
-                                        .onChange(of: dspState.masterGain) { _, _ in dspState.applyVolume() }
-
-                                // ... restlicher Code bleibt ...
-                            }
-                        }
-                        
-                        CardContainer {
-                            VStack(alignment: .leading, spacing: 16) {
-                                Label("Audio Routing", systemImage: "arrow.left.and.right.square")
-                                    .font(.headline)
-                                    .foregroundColor(.secondary)
-                                
-                                RoutingRow(icon: "macwindow", label: "Input", value: dspState.activeInput)
-                                Divider()
-                                RoutingRow(icon: "tv", label: "Output", value: dspState.activeOutput)
-                                
-                                Spacer(minLength: 20)
-                                
-                                Toggle(isOn: $dspState.isEnabled.animation(.spring)) {
-                                    HStack {
-                                        Image(systemName: dspState.isEnabled ? "speaker.wave.3.fill" : "speaker.slash.fill")
-                                            .foregroundColor(dspState.isEnabled ? .green : .red)
-                                        Text(dspState.isEnabled ? "Ambiophonics Active" : "Bypass (Stereo)")
-                                            .fontWeight(.medium)
-                                    }
-                                }
-                                .toggleStyle(.button)
-                                .buttonStyle(.borderedProminent)
-                                .tint(dspState.isEnabled ? .blue : .gray)
-                                .frame(maxWidth: .infinity)
-                                .onChange(of: dspState.isEnabled) { _, _ in dspState.applyEnabled() }
-                            }
-                        }
-                    }
-                }
-                .padding(32)
-            }
-            .background(
-                LinearGradient(
-                    colors: [Color(NSColor.windowBackgroundColor), Color(NSColor.underPageBackgroundColor)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ).ignoresSafeArea()
-            )
-            .navigationTitle("OAPW Control Center")
-        }
-    }
-    
-    private var headerSection: some View {
-        HStack {
-            VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 20) {
+            
+            // --- HEADER ---
+            VStack(alignment: .leading, spacing: 5) {
                 Text("Recursive Ambiophonic Crosstalk Elimination")
-                    .font(.subheadline)
+                    .font(.title3)
                     .foregroundColor(.secondary)
-                Text("DSP Engine Running")
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.green.opacity(0.2))
-                    .foregroundColor(.green)
+                
+                Text(isRunning ? "DSP Engine Running" : "DSP Engine Stopped")
+                    .font(.subheadline)
+                    .bold()
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(isRunning ? Color.green.opacity(0.2) : Color.red.opacity(0.2))
+                    .foregroundColor(isRunning ? .green : .red)
                     .cornerRadius(8)
             }
-            Spacer()
+            .padding(.bottom, 5)
+            
+            // --- HAUPTBEREICH (RACE & Routing/Geometrie nebeneinander) ---
+            HStack(alignment: .top, spacing: 20) {
+                
+                // 1. RACE Parameters Panel (Links)
+                GroupBox(label:
+                    HStack {
+                        Label("RACE Parameters", systemImage: "waveform.path.ecg")
+                        Spacer()
+                        Button(action: resetRACEParameters) {
+                            Label("Reset", systemImage: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                )
+                {
+                    VStack(spacing: 20) {
+                        parameterRow(name: "Attenuation", value: $attenuation, range: -10...0, unit: "dB")
+                        parameterRow(name: "Speaker Delay", value: $speakerDelay, range: 0...100, unit: "µs")
+                        parameterRow(name: "Center Level", value: $centerLevel, range: 0...1, unit: "")
+                        parameterRow(name: "Volume", value: $volumePercent, range: 0...200, unit: "%")
+                    }
+                    .padding(.top, 15)
+                }
+                
+                
+                // Rechte Spalte: Routing und Geometrie untereinander
+                VStack(spacing: 20) {
+                    
+                    // 2. Audio Routing Panel (Oben Rechts)
+                    GroupBox(label: Label("Audio Routing", systemImage: "arrow.left.and.right.square")) {
+                        VStack(alignment: .leading, spacing: 15) {
+                            HStack {
+                                Text("Input").foregroundColor(.secondary)
+                                Spacer()
+                                Text("BlackHole 2ch")
+                            }
+                            Divider()
+                            HStack {
+                                Text("Output").foregroundColor(.secondary)
+                                Spacer()
+                                Text("MacBook Pro")
+                            }
+                            
+                            Spacer().frame(height: 10)
+                            
+                            Text("Processing Mode").font(.subheadline).foregroundColor(.secondary)
+                            Picker("", selection: $processingMode) {
+                                Text("Music (HQ)").tag(0)
+                                Text("Movie (Low Latency)").tag(1)
+                            }
+                            .pickerStyle(SegmentedPickerStyle())
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                isAmbiophonicsActive.toggle()
+                                if let dspPtr = AudioEngineManager.shared.dspEnginePtr {
+                                    wrapper_setRaceEnabled(dspPtr, isAmbiophonicsActive)
+                                }
+                            }) {
+                                Label(isAmbiophonicsActive ? "Ambiophonics Active" : "Ambiophonics Bypassed", systemImage: isAmbiophonicsActive ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                                    .frame(maxWidth: .infinity)
+                                    .padding(6)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(isAmbiophonicsActive ? .blue : .gray)
+                            .controlSize(.large)
+                        }
+                        .padding(.top, 15)
+                    }
+                    
+                    // 3. Geometrie Rechner (Unten Rechts)
+                    GeometryCalculatorView(
+                        targetDelay: $speakerDelay,
+                        targetAttenuation: $attenuation,
+                        onApply: updateRACEParameters
+                    )
+                }
+            }
+            
+            // --- FFT SPECTRUM ANALYZER ---
+            SpectrumAnalyzerView()
+                        
+            // --- EQ CONTROL PANEL (Ganz unten) ---
+            EQControlPanel()
+            
+        }
+        .padding(25)
+        //
+        // nächste Zeile wird nicht mehr benötigt, da diese Parameter bereits übergeordnet auf 1000 x 1000 als default gesetzt sind in OAPW_Mac_V1App.swift!
+        //.frame(minWidth: 800, minHeight: 750)
+        //
+        .onAppear {
+            AudioEngineManager.shared.setupAndStart()
+            updateRACEParameters()
         }
     }
-}
-
-// MARK: - Reusable UI Components (Bleiben unverändert)
-struct CardContainer<Content: View>: View {
-    @ViewBuilder var content: Content
-    var body: some View {
-        VStack(alignment: .leading) { content }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 4)
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Color.white.opacity(0.2), lineWidth: 1))
+    
+    private func updateRACEParameters() {
+        if let dspPtr = AudioEngineManager.shared.dspEnginePtr {
+            // centerP bleibt auf 0.5 (interner RACE Parameter)
+            wrapper_setParameters(dspPtr, speakerDelay, attenuation, 0.5, true)
+            wrapper_setCenterLevel(dspPtr, centerLevel)
+            
+            // NEU: Prozentwert in linearen Faktor umrechnen (100% -> 1.0, 150% -> 1.5)
+            wrapper_setVolume(dspPtr, volumePercent / 100.0)
+        }
     }
-}
-
-struct SliderControl: View {
-    let title: String
-    @Binding var value: Double
-    let range: ClosedRange<Double>
-    let unit: String
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func resetRACEParameters() {
+        // 1. UI und AppStorage Variablen auf Default setzen
+        attenuation = -2.3
+        speakerDelay = 68.0
+        centerLevel = 0.0
+        volumePercent = 100.0
+        
+        // 2. Werte direkt an die C++ Engine durchreichen
+        updateRACEParameters()
+    }
+    
+    @ViewBuilder
+    private func parameterRow(name: String, value: Binding<Float>, range: ClosedRange<Float>, unit: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
             HStack {
-                Text(title).font(.subheadline)
+                Text(name)
                 Spacer()
-                Text("\(value, specifier: "%.1f") \(unit)")
-                    .font(.system(.subheadline, design: .rounded).monospacedDigit())
+                Text(String(format: "%.1f %@", value.wrappedValue, unit))
                     .foregroundColor(.secondary)
             }
-            Slider(value: $value, in: range).tint(.blue)
+            Slider(value: value, in: range) { editing in
+                if !editing {
+                    updateRACEParameters()
+                }
+            }
         }
     }
 }
 
-struct RoutingRow: View {
-    let icon: String
-    let label: String
-    let value: String
+// --------------------------------------------------------
+// --- DAS 3-BAND EQ MODUL ---
+// --------------------------------------------------------
+
+struct EQControlPanel: View {
+    // @AppStorage speichert die Werte dauerhaft für den nächsten Start
+    @AppStorage("eqEnabled") private var isEQEnabled: Bool = false
+    
+    @AppStorage("eqLowFreq") private var lowFreq: Double = 100.0
+    @AppStorage("eqLowQ") private var lowQ: Double = 0.707
+    @AppStorage("eqLowGain") private var lowGain: Double = 0.0
+    
+    @AppStorage("eqMidFreq") private var midFreq: Double = 1000.0
+    @AppStorage("eqMidQ") private var midQ: Double = 0.707
+    @AppStorage("eqMidGain") private var midGain: Double = 0.0
+    
+    @AppStorage("eqHighFreq") private var highFreq: Double = 5000.0
+    @AppStorage("eqHighQ") private var highQ: Double = 0.707
+    @AppStorage("eqHighGain") private var highGain: Double = 0.0
+    
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).foregroundColor(.secondary).frame(width: 24)
-            Text(label).font(.subheadline).foregroundColor(.secondary)
-            Spacer()
-            Text(value).font(.subheadline).fontWeight(.medium)
+        GroupBox(label:
+            HStack {
+                Label("3-Band Parametric EQ (Biquad IIR)", systemImage: "slider.horizontal.3")
+                    .font(.headline)
+                
+                Spacer()
+                
+                // --- NEU: Der Reset Button ---
+                Button(action: resetEQ) {
+                    Label("Reset", systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(.bordered)
+                .padding(.trailing, 10)
+                // -----------------------------
+                
+                Toggle("Aktiv", isOn: $isEQEnabled)
+                    .toggleStyle(SwitchToggleStyle(tint: .blue))
+                    .onChange(of: isEQEnabled) { _, newValue in
+                        if let dspPtr = AudioEngineManager.shared.dspEnginePtr {
+                            wrapper_setEqEnabled(dspPtr, newValue)
+                        }
+                    }
+            }
+        ) {
+            HStack(spacing: 30) {
+                eqBandView(name: "Low", freq: $lowFreq, freqRange: 20...250, q: $lowQ, gain: $lowGain, bandIndex: 0)
+                Divider()
+                eqBandView(name: "Mid", freq: $midFreq, freqRange: 250...4000, q: $midQ, gain: $midGain, bandIndex: 1)
+                Divider()
+                eqBandView(name: "High", freq: $highFreq, freqRange: 4000...16000, q: $highQ, gain: $highGain, bandIndex: 2)
+            }
+            .padding(.top, 15)
+            .padding(.bottom, 5)
+            .opacity(isEQEnabled ? 1.0 : 0.5)
+            .disabled(!isEQEnabled)
         }
+        .onAppear {
+            // WICHTIG: Beim Start die aus AppStorage geladenen Werte an die C++ Engine schicken!
+            sendToDSP(band: 0, f: lowFreq, q: lowQ, g: lowGain)
+            sendToDSP(band: 1, f: midFreq, q: midQ, g: midGain)
+            sendToDSP(band: 2, f: highFreq, q: highQ, g: highGain)
+            
+            if let dspPtr = AudioEngineManager.shared.dspEnginePtr {
+                wrapper_setEqEnabled(dspPtr, isEQEnabled)
+            }
+        }
+    }
+    
+    // Logik für den Reset-Schalter
+    private func resetEQ() {
+        // 1. Die UI/Speicher-Werte auf Default setzen
+        isEQEnabled = false
+        lowGain = 0.0
+        midGain = 0.0
+        highGain = 0.0
+        
+        // 2. Die C++ Engine sofort aktualisieren
+        sendToDSP(band: 0, f: lowFreq, q: lowQ, g: 0.0)
+        sendToDSP(band: 1, f: midFreq, q: midQ, g: 0.0)
+        sendToDSP(band: 2, f: highFreq, q: highQ, g: 0.0)
+        
+        if let dspPtr = AudioEngineManager.shared.dspEnginePtr {
+            wrapper_setEqEnabled(dspPtr, false)
+        }
+    }
+    
+    @ViewBuilder
+    private func eqBandView(name: String, freq: Binding<Double>, freqRange: ClosedRange<Double>, q: Binding<Double>, gain: Binding<Double>, bandIndex: Int32) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("\(name) Band").font(.subheadline).bold()
+            HStack {
+                Text("Freq:").frame(width: 35, alignment: .leading).font(.caption)
+                Slider(value: freq, in: freqRange)
+                Text(String(format: "%.0f Hz", freq.wrappedValue)).frame(width: 50, alignment: .trailing).font(.caption)
+            }
+            HStack {
+                Text("Q:").frame(width: 35, alignment: .leading).font(.caption)
+                Slider(value: q, in: 0.1...10.0)
+                Text(String(format: "%.2f", q.wrappedValue)).frame(width: 50, alignment: .trailing).font(.caption)
+            }
+            HStack {
+                Text("Gain:").frame(width: 35, alignment: .leading).font(.caption)
+                Slider(value: gain, in: -12.0...12.0)
+                Text(String(format: "%+.1f dB", gain.wrappedValue)).frame(width: 50, alignment: .trailing).font(.caption)
+            }
+        }
+        // onChange feuert bei manueller Bedienung der Slider
+        .onChange(of: freq.wrappedValue) { _, _ in sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
+        .onChange(of: q.wrappedValue) { _, _ in sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
+        .onChange(of: gain.wrappedValue) { _, _ in sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
+    }
+    
+    private func sendToDSP(band: Int32, f: Double, q: Double, g: Double) {
+        guard let dspPtr = AudioEngineManager.shared.dspEnginePtr else { return }
+        // Hier erfolgt die Umwandlung von Double (SwiftUI) auf Float (C++)
+        wrapper_setEqBand(dspPtr, band, Float(f), Float(q), Float(g))
+    }
+}
+
+// --------------------------------------------------------
+// --- SPECTRUM ANALYZER MODUL (Neon/UV Version) ---
+// --------------------------------------------------------
+
+struct SpectrumAnalyzerView: View {
+    @State private var spectrumData: [Float] = Array(repeating: 0.1, count: 32)
+    let updateTimer = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
+    
+    var body: some View {
+        GroupBox(label: Label("Realtime FFT Spectrum - logarithmic scale from 20Hz to 20kHz", systemImage: "waveform")) {
+            VStack(spacing: 8) {
+                
+                // 1. Die dynamischen FFT-Balken
+                HStack(alignment: .bottom, spacing: 3) {
+                    ForEach(0..<spectrumData.count, id: \.self) { i in
+                        let level = CGFloat(spectrumData[i])
+                        
+                        RoundedRectangle(cornerRadius: 2)
+                            // HIER rufen wir nun die externe Farblogik auf
+                            .fill(getBarColor(for: level))
+                            .frame(height: max(level * 120.0, 4.0))
+                            .animation(.linear(duration: 0.05), value: spectrumData[i])
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 120)
+                
+                // 2. Die logarithmische X-Achse (Stützfrequenzen)
+                GeometryReader { geo in
+                    let w = geo.size.width
+                    
+                    Text("20 Hz").position(x: 15, y: 10)
+                    Text("100 Hz").position(x: w * 0.233, y: 10)
+                    Text("1 kHz").position(x: w * 0.566, y: 10)
+                    Text("10 kHz").position(x: w * 0.900, y: 10)
+                    Text("20 kHz").position(x: w - 20, y: 10)
+                }
+                .frame(height: 20)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(Color.gray)
+                
+            }
+            .padding(.horizontal, 15)
+            .padding(.vertical, 15)
+            .background(Color(white: 0.08))
+            .cornerRadius(6)
+            .padding(.top, 10)
+        }
+        .onReceive(updateTimer) { _ in
+            fetchFFTData()
+        }
+    }
+    
+    // --- NEU: Reine Swift-Funktion für die Farbzuweisung ---
+    private func getBarColor(for level: CGFloat) -> Color {
+        if level <= 0.75 {
+            return .blue
+        } else if level <= 0.90 {
+            return .red
+        } else {
+            return .purple
+        }
+    }
+    
+    private func fetchFFTData() {
+        guard let dspPtr = AudioEngineManager.shared.dspEnginePtr else { return }
+        var rawFFT = [Float](repeating: 0.0, count: 32)
+        wrapper_getSpectrumBands(dspPtr, &rawFFT, 32)
+        self.spectrumData = rawFFT
+    }
+}
+
+// --------------------------------------------------------
+// --- RACE GEOMETRIE RECHNER ---
+// --------------------------------------------------------
+
+struct GeometryCalculatorView: View {
+    @Binding var targetDelay: Float
+    @Binding var targetAttenuation: Float
+    var onApply: () -> Void
+
+    @State private var listenerDistance: Double = 60.0
+    @State private var speakerSeparation: Double = 30.0
+    @State private var headWidth: Double = 17.5
+
+    var body: some View {
+        GroupBox(label: Label("Geometry Calculator", systemImage: "ruler")) {
+            VStack(spacing: 15) {
+                HStack {
+                    Text("Distance Head Baseline").font(.subheadline)
+                    Spacer()
+                    Slider(value: $listenerDistance, in: 20...400)
+                    Text(String(format: "%.0f cm", listenerDistance)).frame(width: 65, alignment: .trailing).font(.caption)
+                }
+                
+                HStack {
+                    Text("Speaker Separation").font(.subheadline)
+                    Spacer()
+                    Slider(value: $speakerSeparation, in: 10...300)
+                    Text(String(format: "%.0f cm", speakerSeparation)).frame(width: 65, alignment: .trailing).font(.caption)
+                }
+
+                Divider()
+
+                Button(action: calculateAndApply) {
+                    Label("Calculate & Apply", systemImage: "arrow.up.right.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.blue)
+            }
+            .padding(.top, 10)
+        }
+    }
+
+    private func calculateAndApply() {
+        let c = 34300.0 // Schallgeschwindigkeit in cm/s
+        let hw = headWidth / 2.0
+        let sw = speakerSeparation / 2.0
+        let d = listenerDistance
+
+        let dDirect = sqrt(pow(sw - hw, 2) + pow(d, 2))
+        let dCross = sqrt(pow(sw + hw, 2) + pow(d, 2))
+
+        let deltaDistance = dCross - dDirect
+        let delayMicroseconds = Float((deltaDistance / c) * 1_000_000)
+
+        let attenuationLinear = dDirect / dCross
+        let attenuationDB = Float(20.0 * log10(attenuationLinear))
+
+        targetDelay = min(max(delayMicroseconds, 0.0), 100.0)
+        targetAttenuation = max(attenuationDB, -10.0)
+        
+        onApply()
     }
 }

@@ -1,40 +1,29 @@
-# OAPW Mac V1 (Ambiophonics Audio Engine)
+# OAPW for macOS (Open Ambiophonics Processing Window)
 
-A high-performance, ultra-low-latency macOS application executing the **Recursive Ambiophonic Crosstalk Elimination (RACE)** algorithm in real time. Designed for audiophile playback and synchronized multimedia viewing.
+OAPW for macOS ist eine native, eigenständige Desktop-Applikation zur Echtzeit-Audiosignalverarbeitung. Sie implementiert den **Recursive Ambiophonic Crosstalk Elimination (RACE)** Algorithmus, um eine extrem breite, holografische Stereobühne über nah beieinander stehende Lautsprecher zu erzeugen.
 
----
+Entwickelt von Dr. Ulrich Thibaut mit Unterstützung durch Gemini.
 
-## 🚀 Key Features
+## 🚀 Features
+* **Nativer RACE-DSP:** Rekursive Crosstalk-Cancellation für eine perfekte Phasenauslöschung und massive Verbreiterung der Stereobühne.
+* **Geometrie-Rechner:** Automatische Berechnung von Delay und Attenuation basierend auf dem Hörerabstand und der Lautsprecher-Basisbreite.
+* **3-Band Parametric EQ:** Integrierter IIR-Biquad-Equalizer zur präzisen klanglichen Anpassung des Signals.
+* **Realtime FFT Analyzer:** 32-Band Spektrumanalysator mit logarithmischer Skala und dynamischer Farbgebung zur visuellen Überwachung des Signals.
+* **Native macOS UI:** Entwickelt mit SwiftUI für maximale Performance und nahtlose Integration in das Betriebssystem (optimiert für macOS Tahoe 26.2).
 
-* **Real-Time DSP Engine (C++17):** Core signal processing written in optimized C++ utilizing custom biquad filters, Hermite interpolation for sub-sample fractional delays, and thread-safe mutex locking.
-* **Modern SwiftUI Dashboard (macOS):** Native, reactive interface built with Swift's `@Observable` macro framework and a robust Singleton architecture.
-* **Microsecond-Precision Delays:** Fine-grained interaural time difference (ITD) tuning down to microsecond ($\mu s$) increments.
-* **Dynamic A/V Sync (Movie vs. Music Mode):** 
-  * *Music Mode (HQ):* Utilizes relaxed buffer sizes (1024 frames) to optimize CPU headroom for future high-order room correction filters.
-  * *Movie Mode (Low Latency):* Forces CoreAudio hardware buffers down to 256 frames (~5.8 ms) to guarantee absolute lip-sync accuracy for video streaming (VLC, YouTube, Netflix).
-* **Acoustic Make-Up Gain:** Independent decibel-scaled volume compensation to seamlessly offset the inherent energy loss caused by destructive phase cancellation in RACE processing.
-* **Exclusive BlackHole Integration:** Seamlessly intercepts virtual system audio routes to process and route signals directly to high-end audio hardware (e.g., HDMI / DAC setups).
+## ⚠️ Aktuelle Einschränkungen & Audio-Routing
+Aufgrund der strengen Sicherheitsarchitektur von macOS (CoreAudio) ist es nativ nicht ohne Weiteres möglich, den System-Ton (z. B. direkt aus Safari, YouTube oder Apple Music) systemweit abzugreifen. 
 
----
+Damit OAPW das Audiosignal verarbeiten kann, wird ein virtuelles Audio-Kabel benötigt:
+1. Lade und installiere **BlackHole 2ch** (kostenloser Open-Source Audio-Treiber).
+2. Nutze einen Mediaplayer, bei dem sich das Audio-Ausgabegerät explizit einstellen lässt (wir empfehlen den **VLC-Player**).
+3. Stelle im VLC-Player als Audio-Ausgabegerät `BlackHole 2ch` ein.
+4. OAPW greift nun automatisch das Signal von `BlackHole 2ch` ab, wendet den Ambiophonics-Effekt an und leitet den Ton an das aktive macOS-Ausgabegerät (z. B. MacBook Pro Lautsprecher oder den Klinkenausgang) weiter.
 
-## 🛠️ System Architecture
-
-1. **Audio Tap (`AVAudioEngine`):** Captures incoming stereo streams via the `BlackHole 2ch` virtual driver.
-2. **C-Language Wrapper Bridge:** Safely encapsulates the C++ `RACEDspEngine` instance as an opaque pointer (`void*`), preventing memory corruption across the Swift/C++ boundary.
-3. **Lock-Free Audio Callback:** Executes sample-by-sample crosstalk elimination inside a high-priority realtime audio thread without blocking the UI.
-
----
-
-## 🎛️ Parameters & Controls
-
-* **Attenuation:** Controls the cancellation factor in decibels ($\text{dB}$).
-* **Speaker Delay:** Interaural time delay in microseconds ($\mu s$).
-* **Center Level:** Direct mono-sum blending for center-stage imaging control.
-* **Make-Up Gain:** Output volume compensation in decibels ($\text{dB}$).
-* **Processing Mode:** Switch dynamically between high-quality music playback and low-latency video synchronization.
-
----
-
-## 📄 License
-
-Open-source project developed for high-end personal acoustic engineering and research.
+## 🛠 Installation & Nutzung
+1. Lade die fertige App `.zip`-Datei unter **Releases** herunter und entpacke sie.
+2. **Wichtiger Hinweis (Apple Gatekeeper):** Da diese Open-Source-App nicht über ein kostenpflichtiges Apple-Zertifikat signiert ist, warnt macOS beim ersten Start möglicherweise vor einem "nicht verifizierten Entwickler". Mache einfach einen **Rechtsklick** auf die App und wähle **"Öffnen"** (oder bestätige es in den Systemeinstellungen unter *Datenschutz & Sicherheit*).
+3. Stelle sicher, dass das Audio-Routing (BlackHole) eingerichtet ist (siehe oben).
+4. Gib im Geometrie-Rechner der App deinen eigenen Hörabstand ein und klicke auf "Calculate & Apply".
+5. Schalte den Ambiophonics-Effekt über den "Ambiophonics Active"-Button ein und aus, um den Unterschied zu hören!
+6. Viel Spaß bei der Installation und viel Freude beim Experimentieren mit dem Sound-Effekt "Ambiophonie!"

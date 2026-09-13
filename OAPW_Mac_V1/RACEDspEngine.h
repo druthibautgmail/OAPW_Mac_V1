@@ -1,74 +1,106 @@
 #ifndef RACEDspEngine_h
 #define RACEDspEngine_h
 
-#include "Biquad.h"
+#ifdef __cplusplus
+#include <vector>
 
+// --- V15.1 BiquadFilter (PEQ) ---
+class BiquadFilter {
+public:
+    BiquadFilter();
+    void setParameters(float frequency, float qFactor, float gain, int sr);
+    float process(float in);
+private:
+    float freq, q, gainDb;
+    int sampleRate;
+    float b0, b1, b2, a1, a2;
+    float z1, z2;
+};
+
+// --- V15.1 IIRFilter (RACE Frequenzbegrenzung) ---
+class IIRFilter {
+public:
+    IIRFilter(const std::vector<double>& a, const std::vector<double>& b);
+    double process(double input);
+private:
+    std::vector<double> ac, bc;
+    std::vector<double> x, y;
+    int order;
+};
+
+// --- RACEDspEngine ---
 class RACEDspEngine {
-public: // WICHTIG: Alles hierunter ist von außen (und für unsere Wrapper) sichtbar!
-    
-    // Konstruktor muss exakt mit der .cpp übereinstimmen
+public:
     RACEDspEngine(float initialDn, float initialAttenuation, float initialCenterP, bool initialFreqLimit);
     ~RACEDspEngine();
 
-    void updateFilters(double sampleRate);
-    
     void setParameters(float newDn, float newAttenuation, float newCenterP, bool newFreqLimit);
-    void setVolume(float newVolume);
+    void setVolume(float newVolumeDb);
     void setRaceEnabled(bool enabled);
     void setFiltersEnabled(bool enabled);
-    void setCenterLevel(float level); // Unser neuer Parameter
+    void setCenterLevel(float level);
+    
+    // EQ Steuerung
+    void setEqEnabled(bool enabled);
+    void setEqBand(int b, float f, float q, float g);
 
-    float getDn();
-    float getAttenuation();
-    float getCenterP();
-    bool getFreqLimit();
-    float getVolume();
-    bool getRaceEnabled();
-    bool getFiltersEnabled();
-
+    // Audio-Verarbeitung
     void processSamples(float* leftBuffer, float* rightBuffer, int numFrames);
+    
+    // Analyzer (optional für GUI)
+    std::vector<float> getSpectrumBands();
 
-private: // WICHTIG: Interne Variablen, die niemand von außen anfassen darf
+private:
     void* dspMutexPtr;
     float* delayBufferL;
     float* delayBufferR;
     int bufferSize;
-    int writeIndex = 0;
+    int writeIndex;
 
-    float volume;
-    bool raceEnabled;
-    bool filtersEnabled;
-    
+    float delaySamples;
     float dn;
     float attenuation;
     float centerP;
+    float centerLevel;
+    float volume;
+
     bool freqLimitRACE;
-    float delaySamples;
-    
-    float centerLevel = 0.0f; // Der interne Center-Wert
+    bool raceEnabled;
+    bool filtersEnabled;
+    bool eqEnabled;
 
-    Biquad hpL1, hpR1, hsL, hsR;
+    IIRFilter raceHpL, raceHpR, raceLpL, raceLpR;
+    BiquadFilter eqL[3], eqR[3];
 
-    inline float applyBandpassL(float in);
-    inline float applyBandpassR(float in);
+    std::vector<float> spectrumBuffer;
+    int spectrumIndex;
+
     inline float hermiteInterpolation(float fraction, float y0, float y1, float y2, float y3);
 };
+#endif /* __cplusplus */
 
-// --- C WRAPPERS (Die Brücke für Swift) ---
+// --- C-WRAPPER FÜR DEN SWIFT BRIDGING-HEADER ---
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Diese beiden existieren vermutlich schon bei dir, wir deklarieren sie der Vollständigkeit halber
 void* createRACEEngine(float initialDn, float initialAttenuation, float initialCenterP, bool initialFreqLimit);
 void destroyRACEEngine(void* enginePtr);
 
-// UNSERE NEUEN SICHEREN SETTER
 void wrapper_setCenterLevel(void* enginePtr, float level);
 void wrapper_setParameters(void* enginePtr, float dn, float attenuation, float centerP, bool freqLimit);
 void wrapper_setRaceEnabled(void* enginePtr, bool enabled);
 void wrapper_setVolume(void* enginePtr, float volume);
+
+// NEU: EQ C-Schnittstellen
+void wrapper_setEqEnabled(void* enginePtr, bool enabled);
+void wrapper_setEqBand(void* enginePtr, int band, float freq, float q, float gain);
+
 void wrapper_processSamples(void* enginePtr, float* leftBuffer, float* rightBuffer, int numFrames);
+
+// NEU: Spektrum-Analyzer Schnittstelle 
+void wrapper_getSpectrumBands(void* enginePtr, float* outBuffer, int numBands);
+
 #ifdef __cplusplus
 }
 #endif

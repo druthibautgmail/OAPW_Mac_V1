@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "AE614D8A302245D400C1C2E9"
-               BuildableName = "OAPW_Mac_V1.app"
-               BlueprintName = "OAPW_Mac_V1"
-               ReferencedContainer = "container:OAPW_Mac_V1.xcodeproj">
+               BuildableName = "OAPW_Mac_V2.app"
+               BlueprintName = "OAPW_Mac_V2"
+               ReferencedContainer = "container:OAPW_Mac_V2.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -46,9 +46,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AE614D8A302245D400C1C2E9"
-            BuildableName = "OAPW_Mac_V1.app"
-            BlueprintName = "OAPW_Mac_V1"
-            ReferencedContainer = "container:OAPW_Mac_V1.xcodeproj">
+            BuildableName = "OAPW_Mac_V2.app"
+            BlueprintName = "OAPW_Mac_V2"
+            ReferencedContainer = "container:OAPW_Mac_V2.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -63,9 +63,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AE614D8A302245D400C1C2E9"
-            BuildableName = "OAPW_Mac_V1.app"
-            BlueprintName = "OAPW_Mac_V1"
-            ReferencedContainer = "container:OAPW_Mac_V1.xcodeproj">
+            BuildableName = "OAPW_Mac_V2.app"
+            BlueprintName = "OAPW_Mac_V2"
+            ReferencedContainer = "container:OAPW_Mac_V2.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

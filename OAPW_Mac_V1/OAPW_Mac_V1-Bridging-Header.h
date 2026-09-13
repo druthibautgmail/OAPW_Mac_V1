@@ -15,3 +15,6 @@ void wrapper_setParameters(void* enginePtr, float dn, float attenuation, float c
 void wrapper_setRaceEnabled(void* enginePtr, bool enabled);
 void wrapper_setVolume(void* enginePtr, float volume);
 void wrapper_processSamples(void* enginePtr, float* leftBuffer, float* rightBuffer, int numFrames);
+// OAPW_Mac_V1-Bridging-Header.h
+void wrapper_setEqEnabled(void* enginePtr, bool enabled);
+void wrapper_setEqBand(void* enginePtr, int band, float freq, float q, float gain);
