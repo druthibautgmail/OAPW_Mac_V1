@@ -4,6 +4,11 @@ OAPW for macOS ist eine native, eigenständige Desktop-Applikation zur Echtzeit-
 
 Entwickelt von Dr. Ulrich Thibaut mit Unterstützung durch Gemini.
 
+## 💻 Systemvoraussetzungen
+* **Betriebssystem:** macOS (nativ kompiliert für Apple Silicon / ARM64, z.B. macOS Tahoe oder macOS 27 Golden Gate).
+* **Audio-Subsystem:** Apple CoreAudio.
+* **Architektur:** Die DSP-Engine für die Recursive Ambiophonic Crosstalk Elimination (RACE) ist in C++ und Swift implementiert und erfordert für latenzfreien und zukunftssicheren Betrieb auf Apple Silicon eine native ARM64-Kompilierung. 
+
 ## 🚀 Features
 * **Nativer RACE-DSP:** Rekursive Crosstalk-Cancellation für eine perfekte Phasenauslöschung und massive Verbreiterung der Stereobühne.
 * **Geometrie-Rechner:** Automatische Berechnung von Delay und Attenuation basierend auf dem Hörerabstand und der Lautsprecher-Basisbreite.
@@ -20,10 +25,12 @@ Damit OAPW das Audiosignal verarbeiten kann, wird ein virtuelles Audio-Kabel ben
 3. Stelle im VLC-Player als Audio-Ausgabegerät `BlackHole 2ch` ein.
 4. OAPW greift nun automatisch das Signal von `BlackHole 2ch` ab, wendet den Ambiophonics-Effekt an und leitet den Ton an das aktive macOS-Ausgabegerät (z. B. MacBook Pro Lautsprecher oder den Klinkenausgang) weiter.
 
-## 🛠 Installation & Nutzung
-1. Lade die fertige App `.zip`-Datei unter **Releases** herunter und entpacke sie.
-2. **Wichtiger Hinweis (Apple Gatekeeper):** Da diese Open-Source-App nicht über ein kostenpflichtiges Apple-Zertifikat signiert ist, warnt macOS beim ersten Start möglicherweise vor einem "nicht verifizierten Entwickler". Mache einfach einen **Rechtsklick** auf die App und wähle **"Öffnen"** (oder bestätige es in den Systemeinstellungen unter *Datenschutz & Sicherheit*).
-3. Stelle sicher, dass das Audio-Routing (BlackHole) eingerichtet ist (siehe oben).
-4. Gib im Geometrie-Rechner der App deinen eigenen Hörabstand ein und klicke auf "Calculate & Apply".
-5. Schalte den Ambiophonics-Effekt über den "Ambiophonics Active"-Button ein und aus, um den Unterschied zu hören!
-6. Viel Spaß bei der Installation und viel Freude beim Experimentieren mit dem Sound-Effekt "Ambiophonie!"
+### Fluss der Signalverarbeitung
+
+```mermaid
+graph TD
+    A[Audio-Player / z.B. VLC] -->|Lossless Stereo L/R| B(BlackHole 2ch - Virtuelles Audiogerät)
+    B -->|CoreAudio Input| C{OAPW_Mac DSP Engine}
+    C -->|IIR Filtering & RACE Crosstalk Elimination| C
+    C -->|Ambiophonic Output L/R| D[Interne Mac Audio-Hardware]
+    D --> E((Lautsprecher))
