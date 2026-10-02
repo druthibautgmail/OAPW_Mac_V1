@@ -3,6 +3,10 @@
 
 #ifdef __cplusplus
 #include <vector>
+#include <atomic>
+#include <thread>
+#include <string>
+#include <fstream>
 
 // --- V15.1 BiquadFilter (PEQ) ---
 class BiquadFilter {
@@ -28,6 +32,19 @@ private:
     int order;
 };
 
+// --- NEU: Lock-Free Ringbuffer für Raw-Audio Export ---
+class LockFreeRecordQueue {
+public:
+    LockFreeRecordQueue(size_t size);
+    void pushBlock(const float* left, const float* right, int numFrames);
+    size_t popBlock(float* outBuffer, size_t maxSamples);
+    void clear();
+private:
+    std::vector<float> buffer;
+    std::atomic<size_t> head;
+    std::atomic<size_t> tail;
+};
+
 // --- RACEDspEngine ---
 class RACEDspEngine {
 public:
@@ -47,8 +64,13 @@ public:
     // Audio-Verarbeitung
     void processSamples(float* leftBuffer, float* rightBuffer, int numFrames);
     
-    // Analyzer (optional für GUI)
+    // Analyzer
     std::vector<float> getSpectrumBands();
+
+    // NEU: Recording Steuerung
+    void startRecording(const std::string& path, int sampleRate);
+    void stopRecording();
+    void enqueueRawSamples(float* leftBuffer, float* rightBuffer, int numFrames);
 
 private:
     void* dspMutexPtr;
@@ -75,6 +97,15 @@ private:
     std::vector<float> spectrumBuffer;
     int spectrumIndex;
 
+    // NEU: Variablen für den Hintergrund-Export
+    LockFreeRecordQueue* recordQueue;
+    std::thread* writerThread;
+    std::atomic<bool> isRecording;
+    std::string currentRecordPath;
+    int recordSampleRate;
+    void diskWriterLoop();
+    void writeWavHeader(std::ofstream& file, uint32_t numFrames, uint32_t sampleRate);
+
     inline float hermiteInterpolation(float fraction, float y0, float y1, float y2, float y3);
 };
 #endif /* __cplusplus */
@@ -92,14 +123,16 @@ void wrapper_setParameters(void* enginePtr, float dn, float attenuation, float c
 void wrapper_setRaceEnabled(void* enginePtr, bool enabled);
 void wrapper_setVolume(void* enginePtr, float volume);
 
-// NEU: EQ C-Schnittstellen
 void wrapper_setEqEnabled(void* enginePtr, bool enabled);
 void wrapper_setEqBand(void* enginePtr, int band, float freq, float q, float gain);
 
 void wrapper_processSamples(void* enginePtr, float* leftBuffer, float* rightBuffer, int numFrames);
-
-// NEU: Spektrum-Analyzer Schnittstelle 
 void wrapper_getSpectrumBands(void* enginePtr, float* outBuffer, int numBands);
+
+// NEU: Recording C-Schnittstellen
+void wrapper_startRecording(void* enginePtr, const char* filePath, int sampleRate);
+void wrapper_stopRecording(void* enginePtr);
+void wrapper_enqueueRawSamples(void* enginePtr, float* leftBuffer, float* rightBuffer, int numFrames);
 
 #ifdef __cplusplus
 }

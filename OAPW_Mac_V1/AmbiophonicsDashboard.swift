@@ -1,11 +1,14 @@
 import SwiftUI
 import Combine
+import AppKit
+import UniformTypeIdentifiers
 
 struct AmbiophonicsDashboard: View {
     // Globale Status
     @State private var isRunning = true
     @State private var isAmbiophonicsActive = true
     @State private var processingMode = 0 // 0 = Music, 1 = Movie
+    @State private var isRecording = false // NEU: Status für die RAW-Aufnahme
     
     // RACE Parameter
     @State private var attenuation: Float = -2.3
@@ -76,7 +79,23 @@ struct AmbiophonicsDashboard: View {
                                 Text("MacBook Pro")
                             }
                             
-                            Spacer().frame(height: 10)
+                            Spacer().frame(height: 5)
+                            
+                            // --- NEU: Aufnahme Button für unprozessierten Stream ---
+                            Button(action: toggleRecording) {
+                                HStack {
+                                    Circle()
+                                        .fill(isRecording ? Color.red : Color.gray)
+                                        .frame(width: 10, height: 10)
+                                    Text(isRecording ? "Stop Recording RAW Stream" : "Record RAW Stream...")
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(4)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(isRecording ? .red : .primary)
+                            
+                            Spacer().frame(height: 5)
                             
                             Text("Processing Mode").font(.subheadline).foregroundColor(.secondary)
                             Picker("", selection: $processingMode) {
@@ -121,34 +140,46 @@ struct AmbiophonicsDashboard: View {
             
         }
         .padding(25)
-        //
-        // nächste Zeile wird nicht mehr benötigt, da diese Parameter bereits übergeordnet auf 1000 x 1000 als default gesetzt sind in OAPW_Mac_V1App.swift!
-        //.frame(minWidth: 800, minHeight: 750)
-        //
         .onAppear {
             AudioEngineManager.shared.setupAndStart()
             updateRACEParameters()
         }
     }
     
+    // --- NEU: Dialog-Aufruf für den verlustfreien WAV-Export ---
+    private func toggleRecording() {
+        if isRecording {
+            AudioEngineManager.shared.stopRecording()
+            isRecording = false
+        } else {
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [UTType.wav]
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = "raw_stream_capture.wav"
+            panel.title = "Speicherort für 32-bit Float Audio-Stream wählen"
+            
+            panel.begin { response in
+                if response == .OK, let url = panel.url {
+                    AudioEngineManager.shared.startRecording(to: url)
+                    isRecording = true
+                }
+            }
+        }
+    }
+    
     private func updateRACEParameters() {
         if let dspPtr = AudioEngineManager.shared.dspEnginePtr {
-            // centerP bleibt auf 0.5 (interner RACE Parameter)
             wrapper_setParameters(dspPtr, speakerDelay, attenuation, 0.5, true)
             wrapper_setCenterLevel(dspPtr, centerLevel)
-            
-            // NEU: Prozentwert in linearen Faktor umrechnen (100% -> 1.0, 150% -> 1.5)
             wrapper_setVolume(dspPtr, volumePercent / 100.0)
         }
     }
+    
     private func resetRACEParameters() {
-        // 1. UI und AppStorage Variablen auf Default setzen
         attenuation = -2.3
         speakerDelay = 68.0
         centerLevel = 0.0
         volumePercent = 100.0
-        
-        // 2. Werte direkt an die C++ Engine durchreichen
         updateRACEParameters()
     }
     
@@ -175,7 +206,6 @@ struct AmbiophonicsDashboard: View {
 // --------------------------------------------------------
 
 struct EQControlPanel: View {
-    // @AppStorage speichert die Werte dauerhaft für den nächsten Start
     @AppStorage("eqEnabled") private var isEQEnabled: Bool = false
     
     @AppStorage("eqLowFreq") private var lowFreq: Double = 100.0
@@ -198,13 +228,11 @@ struct EQControlPanel: View {
                 
                 Spacer()
                 
-                // --- NEU: Der Reset Button ---
                 Button(action: resetEQ) {
                     Label("Reset", systemImage: "arrow.counterclockwise")
                 }
                 .buttonStyle(.bordered)
                 .padding(.trailing, 10)
-                // -----------------------------
                 
                 Toggle("Aktiv", isOn: $isEQEnabled)
                     .toggleStyle(SwitchToggleStyle(tint: .blue))
@@ -228,7 +256,6 @@ struct EQControlPanel: View {
             .disabled(!isEQEnabled)
         }
         .onAppear {
-            // WICHTIG: Beim Start die aus AppStorage geladenen Werte an die C++ Engine schicken!
             sendToDSP(band: 0, f: lowFreq, q: lowQ, g: lowGain)
             sendToDSP(band: 1, f: midFreq, q: midQ, g: midGain)
             sendToDSP(band: 2, f: highFreq, q: highQ, g: highGain)
@@ -239,15 +266,12 @@ struct EQControlPanel: View {
         }
     }
     
-    // Logik für den Reset-Schalter
     private func resetEQ() {
-        // 1. Die UI/Speicher-Werte auf Default setzen
         isEQEnabled = false
         lowGain = 0.0
         midGain = 0.0
         highGain = 0.0
         
-        // 2. Die C++ Engine sofort aktualisieren
         sendToDSP(band: 0, f: lowFreq, q: lowQ, g: 0.0)
         sendToDSP(band: 1, f: midFreq, q: midQ, g: 0.0)
         sendToDSP(band: 2, f: highFreq, q: highQ, g: 0.0)
@@ -277,7 +301,6 @@ struct EQControlPanel: View {
                 Text(String(format: "%+.1f dB", gain.wrappedValue)).frame(width: 50, alignment: .trailing).font(.caption)
             }
         }
-        // onChange feuert bei manueller Bedienung der Slider
         .onChange(of: freq.wrappedValue) { _, _ in sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
         .onChange(of: q.wrappedValue) { _, _ in sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
         .onChange(of: gain.wrappedValue) { _, _ in sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
@@ -285,39 +308,56 @@ struct EQControlPanel: View {
     
     private func sendToDSP(band: Int32, f: Double, q: Double, g: Double) {
         guard let dspPtr = AudioEngineManager.shared.dspEnginePtr else { return }
-        // Hier erfolgt die Umwandlung von Double (SwiftUI) auf Float (C++)
         wrapper_setEqBand(dspPtr, band, Float(f), Float(q), Float(g))
     }
 }
 
 // --------------------------------------------------------
-// --- SPECTRUM ANALYZER MODUL (Neon/UV Version) ---
+// --- SPECTRUM ANALYZER MODUL (Gradient Mask Version) ---
 // --------------------------------------------------------
 
 struct SpectrumAnalyzerView: View {
     @State private var spectrumData: [Float] = Array(repeating: 0.1, count: 32)
     let updateTimer = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
     
+    // --- NEU: Der statische Farbverlauf für die absolute Y-Achse ---
+    let barGradient = LinearGradient(
+        stops: [
+            .init(color: Color(red: 0.0, green: 0.2, blue: 0.7), location: 0.0),   // Dunkelblau am Boden
+            .init(color: Color(red: 0.0, green: 0.3, blue: 0.9), location: 0.75),  // Blau bis 75% Aussteuerung
+            .init(color: .red, location: 0.90),                                    // Übergang zu Rot bei 90%
+            .init(color: .purple, location: 1.0)                                   // Magenta (Purple) bei 100%
+        ],
+        startPoint: .bottom,
+        endPoint: .top
+    )
+    
     var body: some View {
         GroupBox(label: Label("Realtime FFT Spectrum - logarithmic scale from 20Hz to 20kHz", systemImage: "waveform")) {
             VStack(spacing: 8) {
                 
-                // 1. Die dynamischen FFT-Balken
                 HStack(alignment: .bottom, spacing: 3) {
                     ForEach(0..<spectrumData.count, id: \.self) { i in
                         let level = CGFloat(spectrumData[i])
+                        let barHeight = max(level * 120.0, 4.0)
                         
-                        RoundedRectangle(cornerRadius: 2)
-                            // HIER rufen wir nun die externe Farblogik auf
-                            .fill(getBarColor(for: level))
-                            .frame(height: max(level * 120.0, 4.0))
+                        // --- NEU: Wir zeichnen den kompletten Gradienten und maskieren ihn mit der dynamischen Balkenhöhe ---
+                        Rectangle()
+                            .fill(barGradient)
+                            .frame(height: 120) // Der Gradient ist immer voll aufgezogen
+                            .mask(
+                                VStack {
+                                    Spacer(minLength: 0) // Drückt den eigentlichen Balken nach unten
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .frame(height: barHeight)
+                                }
+                            )
                             .animation(.linear(duration: 0.05), value: spectrumData[i])
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 120)
                 
-                // 2. Die logarithmische X-Achse (Stützfrequenzen)
                 GeometryReader { geo in
                     let w = geo.size.width
                     
@@ -340,17 +380,6 @@ struct SpectrumAnalyzerView: View {
         }
         .onReceive(updateTimer) { _ in
             fetchFFTData()
-        }
-    }
-    
-    // --- NEU: Reine Swift-Funktion für die Farbzuweisung ---
-    private func getBarColor(for level: CGFloat) -> Color {
-        if level <= 0.75 {
-            return .blue
-        } else if level <= 0.90 {
-            return .red
-        } else {
-            return .purple
         }
     }
     

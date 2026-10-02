@@ -6,30 +6,52 @@ class AudioEngineManager {
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     
-    // NEU: Globaler Pointer für die C++ Engine, damit das Dashboard (FFT/EQ) darauf zugreifen kann
     var dspEnginePtr: UnsafeMutableRawPointer? = nil
     
-    // Steuert die Puffergröße dynamisch je nach Modus
     var isLowLatencyMode: Bool = false {
         didSet {
             updateBufferSize()
         }
     }
     
-    // Variablen für die native macOS Aufnahme
-    private var audioFile: AVAudioFile?
-    private var isRecording = false
+    private(set) var isRecording = false
+    
+    // NEU: Hält das Betriebssystem davon ab, die App schlafen zu legen
+    private var powerActivity: NSObjectProtocol?
     
     private init() {
-            // NEU: Startet mit echten 68.0 µs Delay statt 0.5 µs
-            dspEnginePtr = createRACEEngine(68.0, -2.3, 0.5, true)
+        dspEnginePtr = createRACEEngine(68.0, -2.3, 0.5, true)
+        
+        // NEU: Listener für CoreAudio Resets (Hardware Clock Drift)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleConfigurationChange),
+            name: .AVAudioEngineConfigurationChange,
+            object: nil
+        )
+    }
+    
+    // NEU: Diese Funktion wird automatisch aufgerufen, wenn macOS die Audio-Geräte resettet
+    @objc private func handleConfigurationChange() {
+        print("AVAudioEngine: Configuration Change erkannt (z.B. durch Clock Drift). Starte Engine neu...")
+        // Kurzer Delay, damit macOS die Hardware neu sortieren kann
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.setupAndStart()
         }
+    }
     
     func setupAndStart() {
+        // 1. Verhindere App Nap und Ruhezustand während der Audio-Verarbeitung
+                if powerActivity == nil {
+                    powerActivity = ProcessInfo.processInfo.beginActivity(
+                        options: [.userInitiated, .latencyCritical, .idleSystemSleepDisabled],
+                        reason: "OAPW Realtime Audio DSP"
+                    )
+                    print("macOS App Nap und Ruhezustand für OAPW blockiert.")
+                }
+        
         let inputNode = engine.inputNode
         let mainMixer = engine.mainMixerNode
-        
-        // Holt sich das Format des aktuellen macOS-Standardeingangs
         let inputFormat = inputNode.outputFormat(forBus: 0)
         
         engine.attach(playerNode)
@@ -46,24 +68,20 @@ class AudioEngineManager {
             print("Fehler beim Starten der AudioEngine: \(error.localizedDescription)")
         }
     }
-
-    // ----------------------------------------
+    
+    // ... hier folgen unverändert updateBufferSize() und der Rest der Datei ...
         
-    // Methode zum Umschalten der Puffergröße im laufenden Betrieb
     private func updateBufferSize() {
         guard engine.isRunning else { return }
-        
         let inputNode = engine.inputNode
         inputNode.removeTap(onBus: 0)
         installTap(withMode: isLowLatencyMode)
-        print("Audio-Puffergröße dynamisch geändert auf: \(isLowLatencyMode ? "256 (Movie / Low-Latency)" : "1024 (Music / HQ)")")
+        print("Audio-Puffergröße geändert auf: \(isLowLatencyMode ? "256" : "1024")")
     }
     
     private func installTap(withMode lowLatency: Bool) {
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
-        
-        // 256 Frames im Movie-Modus (~5.8ms), 1024 Frames im Music-Modus (~23.2ms)
         let bufferSize: AVAudioFrameCount = lowLatency ? 256 : 1024
         
         inputNode.removeTap(onBus: 0)
@@ -72,21 +90,27 @@ class AudioEngineManager {
         }
     }
     
-    // Aufnahme-Steuerung über AVAudioFile
+    // NEU: Aufnahme delegiert komplett an C++
     func startRecording(to url: URL) {
-        let format = engine.inputNode.outputFormat(forBus: 0)
-        do {
-            audioFile = try AVAudioFile(forWriting: url, settings: format.settings)
-            isRecording = true
-            print("Aufnahme gestartet: \(url.path)")
-        } catch {
-            print("Fehler beim Erstellen der Audiodatei: \(error.localizedDescription)")
+        let path = url.path
+        let sampleRate = Int32(engine.inputNode.outputFormat(forBus: 0).sampleRate)
+        
+        // Wandelt den Swift-String für C++ um
+        path.withCString { cString in
+            if let ptr = dspEnginePtr {
+                wrapper_startRecording(ptr, cString, sampleRate)
+            }
         }
+        
+        isRecording = true
+        print("Raw-Aufnahme (Lock-Free) gestartet: \(path)")
     }
 
     func stopRecording() {
+        if let ptr = dspEnginePtr {
+            wrapper_stopRecording(ptr)
+        }
         isRecording = false
-        audioFile = nil // Schließt die Datei sauber ab
         print("Aufnahme beendet.")
     }
     
@@ -101,7 +125,6 @@ class AudioEngineManager {
               let dstData = newBuffer.floatChannelData else { return }
         
         let channelCount = Int(buffer.format.channelCount)
-        
         for ch in 0..<channelCount {
             memcpy(dstData[ch], srcData[ch], Int(frameLength) * MemoryLayout<Float>.size)
         }
@@ -109,18 +132,14 @@ class AudioEngineManager {
         let leftChannel = dstData[0]
         let rightChannel = channelCount > 1 ? dstData[1] : leftChannel
         
-        // 1. C++ DSP-Verarbeitung: Sendet den Ton an die RACE Engine, welche ihn in-place verändert
-        if let ptr = dspEnginePtr {
-            wrapper_processSamples(ptr, leftChannel, rightChannel, Int32(frameLength))
+        // --- 1. RAW-AUDIO IN DEN LOCK-FREE RINGPUFFER (Hintergrund-Aufnahme) ---
+        if isRecording, let ptr = dspEnginePtr {
+            wrapper_enqueueRawSamples(ptr, leftChannel, rightChannel, Int32(frameLength))
         }
         
-        // 2. Das verarbeitete RACE/EQ-Signal bitgenau in die Datei schreiben
-        if isRecording, let file = audioFile {
-            do {
-                try file.write(from: newBuffer)
-            } catch {
-                print("Fehler beim Schreiben der Audiodaten: \(error.localizedDescription)")
-            }
+        // --- 2. DSP-VERARBEITUNG IN C++ (Direkt auf der Kopie) ---
+        if let ptr = dspEnginePtr {
+            wrapper_processSamples(ptr, leftChannel, rightChannel, Int32(frameLength))
         }
         
         playerNode.scheduleBuffer(newBuffer, at: nil, options: [], completionHandler: nil)
